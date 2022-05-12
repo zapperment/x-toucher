@@ -1,0 +1,1 @@
+export const PERSISTENCE_UPDATE_INTERVAL = 1000;

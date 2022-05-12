@@ -10,12 +10,15 @@
  */
 import 'core-js/stable';
 import 'regenerator-runtime/runtime';
-import path from 'path';
+import { join } from 'path';
+import { writeFile, readFileSync, existsSync } from 'fs';
 import { app, BrowserWindow, shell, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
-import { resolveHtmlPath } from './util';
+import { getPersistencePath, getHtmlPath } from './utils';
+import { PERSISTENCE_UPDATE_INTERVAL } from './constants';
+import XToucher from '@zapperment/x-toucher';
 
 export default class AppUpdater {
   constructor() {
@@ -24,6 +27,36 @@ export default class AppUpdater {
     autoUpdater.checkForUpdatesAndNotify();
   }
 }
+
+let xToucher;
+let lastPersistenceData = null;
+const persistenceFilePath = join(getPersistencePath(), 'xtoucher.json');
+if (existsSync(persistenceFilePath)) {
+  lastPersistenceData = readFileSync(persistenceFilePath, {
+    encoding: 'utf8',
+  });
+  xToucher = new XToucher(JSON.parse(lastPersistenceData));
+} else {
+  xToucher = new XToucher();
+}
+let lastPersistenceSaveTime = Date.now();
+
+function run() {
+  if (
+    Date.now() > lastPersistenceSaveTime + PERSISTENCE_UPDATE_INTERVAL &&
+    xToucher.reasonIsReady
+  ) {
+    const nextPersistenceData = xToucher.toString();
+    if (nextPersistenceData !== lastPersistenceData) {
+      writeFile(persistenceFilePath, nextPersistenceData, () => {});
+    }
+    lastPersistenceSaveTime = Date.now();
+    lastPersistenceData = nextPersistenceData;
+  }
+  setImmediate(run);
+}
+
+setTimeout(run, 100);
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -64,11 +97,11 @@ const createWindow = async () => {
   }
 
   const RESOURCES_PATH = app.isPackaged
-    ? path.join(process.resourcesPath, 'assets')
-    : path.join(__dirname, '../../assets');
+    ? join(process.resourcesPath, 'assets')
+    : join(__dirname, '../../assets');
 
   const getAssetPath = (...paths: string[]): string => {
-    return path.join(RESOURCES_PATH, ...paths);
+    return join(RESOURCES_PATH, ...paths);
   };
 
   mainWindow = new BrowserWindow({
@@ -77,11 +110,11 @@ const createWindow = async () => {
     height: 728,
     icon: getAssetPath('icon.png'),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: join(__dirname, 'preload.js'),
     },
   });
 
-  mainWindow.loadURL(resolveHtmlPath('index.html'));
+  mainWindow.loadURL(getHtmlPath('index.html'));
 
   mainWindow.on('ready-to-show', () => {
     if (!mainWindow) {
@@ -131,7 +164,9 @@ app
     app.on('activate', () => {
       // On macOS it's common to re-create a window in the app when the
       // dock icon is clicked and there are no other windows open.
-      if (mainWindow === null) createWindow();
+      if (mainWindow === null) {
+        createWindow();
+      }
     });
   })
   .catch(console.log);
